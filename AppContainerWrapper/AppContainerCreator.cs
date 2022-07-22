@@ -24,7 +24,7 @@ namespace AppContainerWrapper
 
                 return sid;
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 UserEnv.DeriveAppContainerSidFromAppContainerName(containerName, out var existingSid);
                 return existingSid;
@@ -41,38 +41,35 @@ namespace AppContainerWrapper
 
         private void Create(ref Kernel32.STARTUPINFOEX startupinfo, string processName)
         {
-            using (var currentIdentity = WindowsIdentity.GetCurrent())
-            using (var currentToken = new GenericSafeHandle(currentIdentity.Token, Kernel32.CloseHandle, false))
+            using var currentIdentity = WindowsIdentity.GetCurrent();
+            using var currentToken = new GenericSafeHandle(currentIdentity.Token, Kernel32.CloseHandle, false);
+
+            var processInfo = new Kernel32.SafePROCESS_INFORMATION();
+            var flag = Kernel32.CREATE_PROCESS.EXTENDED_STARTUPINFO_PRESENT;
+
+            var res = AdvApi32.CreateProcessAsUser(
+                new HTOKEN(currentToken.DangerousGetHandle()),
+                processName,
+                null,
+                null,
+                null,
+                false,
+                flag,
+                null,
+                null,
+                in startupinfo,
+                out processInfo);
+            if (res)
             {
-                //using (SafeTokenHandle currentToken = new SafeTokenHandle(currentIdentity.Token, ownsHandle: false))
+                var proc = Process.GetProcessById((int)processInfo.dwProcessId);
 
-                var processInfo = new Kernel32.SafePROCESS_INFORMATION();
-                var flag = Kernel32.CREATE_PROCESS.EXTENDED_STARTUPINFO_PRESENT;
-
-                var res = AdvApi32.CreateProcessAsUser(
-                    new HTOKEN(currentToken.DangerousGetHandle()),
-                    processName,
-                    null,
-                    null,
-                    null,
-                    false,
-                    flag,
-                    null,
-                    null,
-                    in startupinfo,
-                    out processInfo);
-                if (res)
-                {
-                    var proc = Process.GetProcessById((int)processInfo.dwProcessId);
-                    
-                }
-                else
-                {
-                    var err = Kernel32.GetLastError();
-                }
-
-                Console.ReadKey();
             }
+            else
+            {
+                var err = Kernel32.GetLastError();
+            }
+
+            Console.ReadKey();
         }
 
         private void SetProcessAttributes(ref Kernel32.STARTUPINFOEX startupinfo, AdvApi32.SafeAllocatedSID sid)
@@ -84,18 +81,15 @@ namespace AppContainerWrapper
 
             var capabilitySize = Marshal.SizeOf(capabilities);
 
-            var list = new SafeProcThreadAttributeList(1);
+            var procThreadAttributeList = Kernel32.SafeProcThreadAttributeList.Create(Kernel32.PROC_THREAD_ATTRIBUTE.PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, capabilities);
 
-            var buffer = new SafeHGlobalBuffer(capabilitySize);
+            var buffer2 = new SafeHandleBuffer(capabilitySize);
 
-            Marshal.StructureToPtr(capabilities, buffer.DangerousGetHandle(), fDeleteOld: false);
+            Marshal.StructureToPtr(capabilities, buffer2.DangerousGetHandle(), fDeleteOld: false);
 
-            //var lpValue = Marshal.AllocHGlobal(IntPtr.Size);
-            //Marshal.WriteIntPtr(lpValue, capabilities.Capabilities);
+            Kernel32.UpdateProcThreadAttribute(procThreadAttributeList.DangerousGetHandle(), 0, Kernel32.PROC_THREAD_ATTRIBUTE.PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, buffer2.DangerousGetHandle(), buffer2.BufferSize);
 
-            Kernel32.UpdateProcThreadAttribute(list.DangerousGetHandle(), 0, Kernel32.PROC_THREAD_ATTRIBUTE.PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, buffer.DangerousGetHandle(), buffer.Size);
-            //Marshal.FreeHGlobal(lpValue);
-            startupinfo.lpAttributeList = list.DangerousGetHandle();
+            startupinfo.lpAttributeList = procThreadAttributeList.DangerousGetHandle();
         }
 
         private void SetSecurityCapabilities(
@@ -110,7 +104,7 @@ namespace AppContainerWrapper
 
             if (appCapabilities is { Length: > 0 })
             {
-                var attributesMemory = new SafeHGlobalBuffer(Marshal.SizeOf(typeof(AdvApi32.SID_AND_ATTRIBUTES)) * appCapabilities.Length);
+                var buffer2 = new SafeHandleBuffer(Marshal.SizeOf(typeof(AdvApi32.SID_AND_ATTRIBUTES)) * appCapabilities.Length);
 
                 for (var i = 0; i < appCapabilities.Length; i++)
                 {
@@ -131,63 +125,12 @@ namespace AppContainerWrapper
                         Sid = safeMemory.DangerousGetHandle()
                     };
 
-                    Marshal.StructureToPtr(attribute, IntPtr.Add(attributesMemory.DangerousGetHandle(), i * Marshal.SizeOf(typeof(AdvApi32.SID_AND_ATTRIBUTES))), false);
+                    Marshal.StructureToPtr(attribute, IntPtr.Add(buffer2.DangerousGetHandle(), i * Marshal.SizeOf(typeof(AdvApi32.SID_AND_ATTRIBUTES))), false);
                 }
 
-                securityCapabilities.Capabilities = attributesMemory.DangerousGetHandle();
+                securityCapabilities.Capabilities = buffer2.DangerousGetHandle();
                 securityCapabilities.CapabilityCount = (uint)appCapabilities.Length;
             }
-        }
-    }
-
-    public class SafeHGlobalBuffer : SafeBuffer
-    {
-        public SafeHGlobalBuffer(int size) : base(true)
-        {
-            handle = Marshal.AllocHGlobal(size);
-            Size = size;
-        }
-
-        public int Size { get; }
-
-        protected override bool ReleaseHandle()
-        {
-            if (!IsInvalid)
-            {
-                Marshal.FreeHGlobal(handle);
-                handle = IntPtr.Zero;
-            }
-
-            return true;
-        }
-    }
-
-    public class SafeProcThreadAttributeList : SafeBuffer
-    {
-        public SafeProcThreadAttributeList(uint attributeCount) : base(true)
-        {
-            var size = SizeT.Zero;
-            Kernel32.InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref size);
-
-            handle = Marshal.AllocHGlobal(size);
-
-            if (!Kernel32.InitializeProcThreadAttributeList(handle, attributeCount, 0, ref size))
-            {
-                Marshal.FreeHGlobal(handle);
-                throw new Win32Exception();
-            }
-        }
-
-        protected override bool ReleaseHandle()
-        {
-            if (!IsInvalid)
-            {
-                Kernel32.DeleteProcThreadAttributeList(handle);
-                Marshal.FreeHGlobal(handle);
-                handle = IntPtr.Zero;
-            }
-
-            return true;
         }
     }
 }
