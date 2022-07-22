@@ -36,16 +36,13 @@ namespace AppContainerWrapper
             var startupinfo = Kernel32.STARTUPINFOEX.Default;
             var sid = CreateAppContainerProfile("TestContainer");
             SetProcessAttributes(ref startupinfo, sid);
-            Create(ref startupinfo, processName);
+            CreateSandboxedProcess(ref startupinfo, processName);
         }
 
-        private void Create(ref Kernel32.STARTUPINFOEX startupinfo, string processName)
+        private void CreateSandboxedProcess(ref Kernel32.STARTUPINFOEX startupinfo, string processName)
         {
             using var currentIdentity = WindowsIdentity.GetCurrent();
             using var currentToken = new GenericSafeHandle(currentIdentity.Token, Kernel32.CloseHandle, false);
-
-            var processInfo = new Kernel32.SafePROCESS_INFORMATION();
-            var flag = Kernel32.CREATE_PROCESS.EXTENDED_STARTUPINFO_PRESENT;
 
             var res = AdvApi32.CreateProcessAsUser(
                 new HTOKEN(currentToken.DangerousGetHandle()),
@@ -54,11 +51,11 @@ namespace AppContainerWrapper
                 null,
                 null,
                 false,
-                flag,
+                Kernel32.CREATE_PROCESS.EXTENDED_STARTUPINFO_PRESENT,
                 null,
                 null,
                 in startupinfo,
-                out processInfo);
+                out var processInfo);
             if (res)
             {
                 var proc = Process.GetProcessById((int)processInfo.dwProcessId);
@@ -83,52 +80,46 @@ namespace AppContainerWrapper
 
             var procThreadAttributeList = Kernel32.SafeProcThreadAttributeList.Create(Kernel32.PROC_THREAD_ATTRIBUTE.PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, capabilities);
 
-            var buffer2 = new SafeHandleBuffer(capabilitySize);
+            var capabilityBuffer = new SafeHandleBuffer(capabilitySize);
 
-            Marshal.StructureToPtr(capabilities, buffer2.DangerousGetHandle(), fDeleteOld: false);
+            Marshal.StructureToPtr(capabilities, capabilityBuffer.DangerousGetHandle(), fDeleteOld: false);
 
-            Kernel32.UpdateProcThreadAttribute(procThreadAttributeList.DangerousGetHandle(), 0, Kernel32.PROC_THREAD_ATTRIBUTE.PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, buffer2.DangerousGetHandle(), buffer2.BufferSize);
+            Kernel32.UpdateProcThreadAttribute(procThreadAttributeList.DangerousGetHandle(), 0, Kernel32.PROC_THREAD_ATTRIBUTE.PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, capabilityBuffer.DangerousGetHandle(), capabilityBuffer.BufferSize);
 
             startupinfo.lpAttributeList = procThreadAttributeList.DangerousGetHandle();
         }
 
-        private void SetSecurityCapabilities(
-            ref Kernel32.SECURITY_CAPABILITIES securityCapabilities,
-            AdvApi32.SafeAllocatedSID appContainerSid,
-            AdvApi32.WELL_KNOWN_SID_TYPE[] appCapabilities)
+        private void SetSecurityCapabilities(ref Kernel32.SECURITY_CAPABILITIES securityCapabilities, AdvApi32.SafeAllocatedSID appContainerSid, AdvApi32.WELL_KNOWN_SID_TYPE[] appCapabilities)
         {
             securityCapabilities.AppContainerSid = appContainerSid.DangerousGetHandle();
             securityCapabilities.Capabilities = IntPtr.Zero;
             securityCapabilities.CapabilityCount = 0;
-            securityCapabilities.Reserved = 0;
 
             if (appCapabilities is { Length: > 0 })
             {
-                var buffer2 = new SafeHandleBuffer(Marshal.SizeOf(typeof(AdvApi32.SID_AND_ATTRIBUTES)) * appCapabilities.Length);
+                var capabilitiesBuffer = new SafeHandleBuffer(Marshal.SizeOf(typeof(AdvApi32.SID_AND_ATTRIBUTES)) * appCapabilities.Length);
 
                 for (var i = 0; i < appCapabilities.Length; i++)
                 {
                     var sidSize = (uint)AdvApi32.SECURITY_MAX_SID_SIZE;
 
-                    var safeMemory = new AdvApi32.SafePSID(sidSize);
+                    var safePsid = new AdvApi32.SafePSID(sidSize);
 
-                    if (!AdvApi32.CreateWellKnownSid(appCapabilities[i], IntPtr.Zero, safeMemory, ref sidSize))
+                    if (!AdvApi32.CreateWellKnownSid(appCapabilities[i], IntPtr.Zero, safePsid, ref sidSize))
                     {
                         throw new Win32Exception();
                     }
 
-                    uint flag = 0x00000004;
-
-                    var attribute = new AdvApi32.SID_AND_ATTRIBUTES
+                    var attributes = new AdvApi32.SID_AND_ATTRIBUTES
                     {
-                        Attributes = flag,
-                        Sid = safeMemory.DangerousGetHandle()
+                        Attributes = (uint)AdvApi32.GroupAttributes.SE_GROUP_ENABLED,
+                        Sid = safePsid.DangerousGetHandle()
                     };
 
-                    Marshal.StructureToPtr(attribute, IntPtr.Add(buffer2.DangerousGetHandle(), i * Marshal.SizeOf(typeof(AdvApi32.SID_AND_ATTRIBUTES))), false);
+                    Marshal.StructureToPtr(attributes, IntPtr.Add(capabilitiesBuffer.DangerousGetHandle(), i * Marshal.SizeOf(typeof(AdvApi32.SID_AND_ATTRIBUTES))), false);
                 }
 
-                securityCapabilities.Capabilities = buffer2.DangerousGetHandle();
+                securityCapabilities.Capabilities = capabilitiesBuffer.DangerousGetHandle();
                 securityCapabilities.CapabilityCount = (uint)appCapabilities.Length;
             }
         }
