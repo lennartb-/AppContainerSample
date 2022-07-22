@@ -35,7 +35,11 @@ namespace AppContainerWrapper
         {
             var startupinfo = Kernel32.STARTUPINFOEX.Default;
             var sid = CreateAppContainerProfile("TestContainer");
+
+            //Native.SetReadOnlySharePermissions(sid);
+
             SetProcessAttributes(ref startupinfo, sid);
+            GrantFolderAccess(sid);
             CreateSandboxedProcess(ref startupinfo, processName);
         }
 
@@ -59,7 +63,6 @@ namespace AppContainerWrapper
             if (res)
             {
                 var proc = Process.GetProcessById((int)processInfo.dwProcessId);
-
             }
             else
             {
@@ -71,7 +74,6 @@ namespace AppContainerWrapper
 
         private void SetProcessAttributes(ref Kernel32.STARTUPINFOEX startupinfo, AdvApi32.SafeAllocatedSID sid)
         {
-
             var capabilities = new Kernel32.SECURITY_CAPABILITIES();
 
             SetSecurityCapabilities(ref capabilities, sid, new[] { AdvApi32.WELL_KNOWN_SID_TYPE.WinCapabilityInternetClientSid });
@@ -82,9 +84,14 @@ namespace AppContainerWrapper
 
             var capabilityBuffer = new SafeHandleBuffer(capabilitySize);
 
-            Marshal.StructureToPtr(capabilities, capabilityBuffer.DangerousGetHandle(), fDeleteOld: false);
+            Marshal.StructureToPtr(capabilities, capabilityBuffer.DangerousGetHandle(), false);
 
-            Kernel32.UpdateProcThreadAttribute(procThreadAttributeList.DangerousGetHandle(), 0, Kernel32.PROC_THREAD_ATTRIBUTE.PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, capabilityBuffer.DangerousGetHandle(), capabilityBuffer.BufferSize);
+            Kernel32.UpdateProcThreadAttribute(
+                procThreadAttributeList.DangerousGetHandle(),
+                0,
+                Kernel32.PROC_THREAD_ATTRIBUTE.PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
+                capabilityBuffer.DangerousGetHandle(),
+                capabilityBuffer.BufferSize);
 
             startupinfo.lpAttributeList = procThreadAttributeList.DangerousGetHandle();
         }
@@ -122,6 +129,49 @@ namespace AppContainerWrapper
                 securityCapabilities.Capabilities = capabilitiesBuffer.DangerousGetHandle();
                 securityCapabilities.CapabilityCount = (uint)appCapabilities.Length;
             }
+        }
+
+        private void GrantFolderAccess(AdvApi32.SafeAllocatedSID appContainerSid)
+        {
+            var file = @"C:\Users\lbrue\Desktop\test.txt";
+            var type = AdvApi32.SE_OBJECT_TYPE.SE_FILE_OBJECT;
+
+            var access = new AdvApi32.EXPLICIT_ACCESS
+            {
+                grfAccessMode = AdvApi32.ACCESS_MODE.SET_ACCESS,
+                grfAccessPermissions = (uint)Native.ACCESS_MASK.SHARE_ACCESS_FULL,
+                grfInheritance = AdvApi32.INHERIT_FLAGS.SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+                Trustee = new AdvApi32.TRUSTEE
+                {
+                    MultipleTrusteeOperation = AdvApi32.MULTIPLE_TRUSTEE_OPERATION.NO_MULTIPLE_TRUSTEE,
+                    ptstrName = appContainerSid.DangerousGetHandle(),
+                    TrusteeForm = AdvApi32.TRUSTEE_FORM.TRUSTEE_IS_SID,
+                    TrusteeType = AdvApi32.TRUSTEE_TYPE.TRUSTEE_IS_WELL_KNOWN_GROUP
+                }
+            };
+            var access2 = new Native.EXPLICIT_ACCESS
+            {
+                AccessMode = (uint)Native.ACCESS_MODE.SET_ACCESS,
+                AccessPermissions = (uint)Native.ACCESS_MASK.SHARE_ACCESS_FULL,
+                Inheritance = (uint)Native.ACCESS_INHERITANCE.SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+                trustee = new Native.TRUSTEE
+                {
+                    MultipleTrusteeOperation = Native.MULTIPLE_TRUSTEE_OPERATION.NO_MULTIPLE_TRUSTEE,
+                    ptstrName = appContainerSid.DangerousGetHandle(),
+                    TrusteeForm = Native.TRUSTEE_FORM.TRUSTEE_IS_SID,
+                    TrusteeType = Native.TRUSTEE_TYPE.TRUSTEE_IS_WELL_KNOWN_GROUP
+                }
+            };
+
+            var info = AdvApi32.GetNamedSecurityInfo(file, type, SECURITY_INFORMATION.DACL_SECURITY_INFORMATION, out var ppsidOwner, out var ppsidGroup, out var ppDacl, out var ppSacl, out var ppSecurityDescriptor);
+
+            var pListOfExplicitEntries = new[] { access };
+            var entr = AdvApi32.SetEntriesInAcl(1, pListOfExplicitEntries, ppDacl.DangerousGetHandle(), out var newAcl);
+
+            IntPtr newDacl;
+            var initializeAclEntriesResult = Native.SetEntriesInAcl(1, ref access2, ppDacl.DangerousGetHandle(), out newDacl);
+            ;
+            //var setInfo = AdvApi32.SetNamedSecurityInfo(file, type, SECURITY_INFORMATION.DACL_SECURITY_INFORMATION, ppsidOwner, ppsidGroup, newAcl, ppSacl);
         }
     }
 }
