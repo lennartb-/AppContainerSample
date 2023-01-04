@@ -8,18 +8,45 @@ using Vanara.PInvoke;
 
 namespace AppContainerWrapper;
 
+/// <summary>
+///     Encapsulates the necessary steps to create a sandboxed process with Windows AppContainers.
+/// </summary>
 public class AppContainerCreator
 {
     private readonly ILogger logger;
 
+    /// <summary>
+    ///     Initializes a new instance of the <see cref="AppContainerCreator" /> class.
+    /// </summary>
+    /// <param name="logger">An implementation of <see cref="ILogger" />.</param>
     public AppContainerCreator(ILogger logger)
     {
         this.logger = logger;
     }
 
+    /// <summary>
+    ///     Initializes a new instance of the <see cref="AppContainerCreator" /> class.
+    /// </summary>
     public AppContainerCreator()
         : this(Logger.None)
     {
+    }
+
+    /// <summary>
+    ///     Creates an AppContainer for the specified process.
+    /// </summary>
+    /// <param name="processName">The full path to the process executable.</param>
+    public void SandboxProcess(string processName)
+    {
+        var startupinfo = Kernel32.STARTUPINFOEX.Default;
+        var sid = CreateOrGetAppContainerProfile("TestContainer", "TestContainerName", "TestContainerDescription");
+
+        SetProcessAttributes(ref startupinfo, sid);
+        GrantFolderAccess(sid, @"D:\");
+        GrantFolderAccess(sid, @"D:\temp2");
+
+        // GrantFolderAccess(sid, @"D:\temp\test.txt");
+        CreateSandboxedProcess(ref startupinfo, processName);
     }
 
     private AdvApi32.SafeAllocatedSID CreateOrGetAppContainerProfile(string containerName, string containerDisplayName, string containerDescription)
@@ -38,18 +65,6 @@ public class AppContainerCreator
         logger.Information("Container profile seems to exist, using existing SID {Sid}", existingSid.ToDisplayString());
 
         return existingSid;
-    }
-
-    public void SandboxProcess(string processName)
-    {
-        var startupinfo = Kernel32.STARTUPINFOEX.Default;
-        var sid = CreateOrGetAppContainerProfile("TestContainer", "TestContainerName", "TestContainerDescription");
-
-        SetProcessAttributes(ref startupinfo, sid);
-        GrantFolderAccess(sid, @"D:\");
-        GrantFolderAccess(sid, @"D:\temp2");
-        //GrantFolderAccess(sid, @"D:\temp\test.txt");
-        CreateSandboxedProcess(ref startupinfo, processName);
     }
 
     private void CreateSandboxedProcess(ref Kernel32.STARTUPINFOEX startupinfo, string processName)
@@ -82,11 +97,37 @@ public class AppContainerCreator
         }
     }
 
+    private void GrantFolderAccess(AdvApi32.SafeAllocatedSID appContainerSid, string path)
+    {
+        logger.Information("Granting folder access for container {SID} to path {Path} ", appContainerSid.ToDisplayString(), path);
+        var type = AdvApi32.SE_OBJECT_TYPE.SE_FILE_OBJECT;
+
+        var access = new AdvApi32.EXPLICIT_ACCESS
+        {
+            grfAccessMode = AdvApi32.ACCESS_MODE.SET_ACCESS,
+            grfAccessPermissions = ACCESS_MASK.GENERIC_ALL,
+            grfInheritance = AdvApi32.INHERIT_FLAGS.SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+            Trustee = new AdvApi32.TRUSTEE
+            {
+                MultipleTrusteeOperation = AdvApi32.MULTIPLE_TRUSTEE_OPERATION.NO_MULTIPLE_TRUSTEE,
+                ptstrName = appContainerSid.DangerousGetHandle(),
+                TrusteeForm = AdvApi32.TRUSTEE_FORM.TRUSTEE_IS_SID,
+                TrusteeType = AdvApi32.TRUSTEE_TYPE.TRUSTEE_IS_WELL_KNOWN_GROUP,
+            },
+        };
+
+        var info = AdvApi32.GetNamedSecurityInfo(path, type, SECURITY_INFORMATION.DACL_SECURITY_INFORMATION, out var ppsidOwner, out var ppsidGroup, out var ppDacl, out var ppSacl, out var ppSecurityDescriptor);
+
+        var entr = AdvApi32.SetEntriesInAcl(1, new[] { access }, ppDacl.DangerousGetHandle(), out var newAcl);
+
+        var setInfo = AdvApi32.SetNamedSecurityInfo(path, type, SECURITY_INFORMATION.DACL_SECURITY_INFORMATION);
+    }
+
     private void SetProcessAttributes(ref Kernel32.STARTUPINFOEX startupinfo, AdvApi32.SafeAllocatedSID sid)
     {
         logger.Information("Setting process attributes");
 
-        var capabilities = new Kernel32.SECURITY_CAPABILITIES();
+        var capabilities = default(Kernel32.SECURITY_CAPABILITIES);
 
         SetSecurityCapabilities(ref capabilities, sid, new[] { AdvApi32.WELL_KNOWN_SID_TYPE.WinCapabilityInternetClientServerSid });
 
@@ -138,11 +179,7 @@ public class AppContainerCreator
                     return;
                 }
 
-                var attributes = new AdvApi32.SID_AND_ATTRIBUTES
-                {
-                    Attributes = (uint)AdvApi32.GroupAttributes.SE_GROUP_ENABLED,
-                    Sid = safePsid.DangerousGetHandle()
-                };
+                var attributes = new AdvApi32.SID_AND_ATTRIBUTES { Attributes = (uint)AdvApi32.GroupAttributes.SE_GROUP_ENABLED, Sid = safePsid.DangerousGetHandle() };
 
                 Marshal.StructureToPtr(attributes, IntPtr.Add(capabilitiesBuffer.DangerousGetHandle(), i * Marshal.SizeOf(typeof(AdvApi32.SID_AND_ATTRIBUTES))), false);
             }
@@ -150,31 +187,5 @@ public class AppContainerCreator
             securityCapabilities.Capabilities = capabilitiesBuffer.DangerousGetHandle();
             securityCapabilities.CapabilityCount = (uint)appCapabilities.Length;
         }
-    }
-
-    private void GrantFolderAccess(AdvApi32.SafeAllocatedSID appContainerSid, string path)
-    {
-        logger.Information("Granting folder access for container {SID} to path {Path} ", appContainerSid.ToDisplayString(), path);
-        var type = AdvApi32.SE_OBJECT_TYPE.SE_FILE_OBJECT;
-
-        var access = new AdvApi32.EXPLICIT_ACCESS
-        {
-            grfAccessMode = AdvApi32.ACCESS_MODE.SET_ACCESS,
-            grfAccessPermissions = ACCESS_MASK.GENERIC_ALL,
-            grfInheritance = AdvApi32.INHERIT_FLAGS.SUB_CONTAINERS_AND_OBJECTS_INHERIT,
-            Trustee = new AdvApi32.TRUSTEE
-            {
-                MultipleTrusteeOperation = AdvApi32.MULTIPLE_TRUSTEE_OPERATION.NO_MULTIPLE_TRUSTEE,
-                ptstrName = appContainerSid.DangerousGetHandle(),
-                TrusteeForm = AdvApi32.TRUSTEE_FORM.TRUSTEE_IS_SID,
-                TrusteeType = AdvApi32.TRUSTEE_TYPE.TRUSTEE_IS_WELL_KNOWN_GROUP
-            }
-        };
-
-        var info = AdvApi32.GetNamedSecurityInfo(path, type, SECURITY_INFORMATION.DACL_SECURITY_INFORMATION, out var ppsidOwner, out var ppsidGroup, out var ppDacl, out var ppSacl, out var ppSecurityDescriptor);
-
-        var entr = AdvApi32.SetEntriesInAcl(1, new[] { access }, ppDacl.DangerousGetHandle(), out var newAcl);
-
-        var setInfo = AdvApi32.SetNamedSecurityInfo(path, type, SECURITY_INFORMATION.DACL_SECURITY_INFORMATION);
     }
 }
