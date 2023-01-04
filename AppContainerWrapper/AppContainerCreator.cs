@@ -42,8 +42,11 @@ public class AppContainerCreator
         var sid = CreateOrGetAppContainerProfile("TestContainer", "TestContainerName", "TestContainerDescription");
 
         SetProcessAttributes(ref startupinfo, sid);
-        GrantFolderAccess(sid, @"D:\");
-        GrantFolderAccess(sid, @"D:\temp2");
+        if (!GrantFolderAccess(sid, @"D:\temp2"))
+        {
+            logger.Information("Error creating AppContainer, last error was: {Error}.", Kernel32.GetLastError());
+            return;
+        }
 
         // GrantFolderAccess(sid, @"D:\temp\test.txt");
         CreateSandboxedProcess(ref startupinfo, processName);
@@ -93,20 +96,22 @@ public class AppContainerCreator
         else
         {
             var err = Kernel32.GetLastError();
-            logger.Information("Created sandboxed process failed, last error is {Error} ", err);
+            logger.Error("Created sandboxed process failed, last error is {Error} ", err);
         }
     }
 
-    private void GrantFolderAccess(AdvApi32.SafeAllocatedSID appContainerSid, string path)
+    /// <remarks>
+    ///     Path should be a directory. Granting access to entire volumes requires additional permissions.
+    /// </remarks>
+    private bool GrantFolderAccess(AdvApi32.SafeAllocatedSID appContainerSid, string path)
     {
-        logger.Information("Granting folder access for container {SID} to path {Path} ", appContainerSid.ToDisplayString(), path);
-        var type = AdvApi32.SE_OBJECT_TYPE.SE_FILE_OBJECT;
+        const AdvApi32.SE_OBJECT_TYPE type = AdvApi32.SE_OBJECT_TYPE.SE_FILE_OBJECT;
 
         var access = new AdvApi32.EXPLICIT_ACCESS
         {
-            grfAccessMode = AdvApi32.ACCESS_MODE.SET_ACCESS,
+            grfAccessMode = AdvApi32.ACCESS_MODE.GRANT_ACCESS,
             grfAccessPermissions = ACCESS_MASK.GENERIC_ALL,
-            grfInheritance = AdvApi32.INHERIT_FLAGS.SUB_CONTAINERS_AND_OBJECTS_INHERIT,
+            grfInheritance = AdvApi32.INHERIT_FLAGS.NO_INHERITANCE,
             Trustee = new AdvApi32.TRUSTEE
             {
                 MultipleTrusteeOperation = AdvApi32.MULTIPLE_TRUSTEE_OPERATION.NO_MULTIPLE_TRUSTEE,
@@ -115,12 +120,33 @@ public class AppContainerCreator
                 TrusteeType = AdvApi32.TRUSTEE_TYPE.TRUSTEE_IS_WELL_KNOWN_GROUP,
             },
         };
+        var info = AdvApi32.GetNamedSecurityInfo(path, type, SECURITY_INFORMATION.DACL_SECURITY_INFORMATION, out var ppsidOwner, out var ppsidGroup, out var ppDacl, out var ppSacl, out _);
 
-        var info = AdvApi32.GetNamedSecurityInfo(path, type, SECURITY_INFORMATION.DACL_SECURITY_INFORMATION, out var ppsidOwner, out var ppsidGroup, out var ppDacl, out var ppSacl, out var ppSecurityDescriptor);
+        if (info.Failed)
+        {
+            logger.Error("Getting security info for path {Path} failed with {Error}.", path, info);
+            return false;
+        }
 
         var entr = AdvApi32.SetEntriesInAcl(1, new[] { access }, ppDacl.DangerousGetHandle(), out var newAcl);
 
-        var setInfo = AdvApi32.SetNamedSecurityInfo(path, type, SECURITY_INFORMATION.DACL_SECURITY_INFORMATION);
+        if (entr.Failed)
+        {
+            logger.Error("Creation of new ACL failed with {Error}.", entr);
+            return false;
+        }
+
+        // ReSharper disable once RedundantArgumentDefaultValue
+        var setInfo = AdvApi32.SetNamedSecurityInfo(path, type, SECURITY_INFORMATION.DACL_SECURITY_INFORMATION, ppsidOwner);
+
+        if (setInfo.Failed)
+        {
+            logger.Error("Setting new ACL for {Path} failed with {Error}.", path, setInfo);
+            return false;
+        }
+
+        logger.Information("Granting folder access for container {SID} to path {Path} ", appContainerSid.ToDisplayString(), path);
+        return true;
     }
 
     private void SetProcessAttributes(ref Kernel32.STARTUPINFOEX startupinfo, AdvApi32.SafeAllocatedSID sid)
@@ -175,7 +201,7 @@ public class AppContainerCreator
                 else
                 {
                     var err = Kernel32.GetLastError();
-                    logger.Information("Creating well known SID failed, last error is {Error} ", err);
+                    logger.Error("Creating well known SID failed, last error is {Error} ", err);
                     return;
                 }
 
