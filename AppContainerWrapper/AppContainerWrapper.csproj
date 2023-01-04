@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net7.0-windows</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="serilog" Version="2.12.0" />
+		<PackageReference Include="vanara.pinvoke.userenv" Version="3.4.12" />
+	</ItemGroup>
+
+</Project>

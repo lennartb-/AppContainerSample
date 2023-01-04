@@ -1,0 +1,54 @@
+﻿<Window
+    x:Class="AppContainerSampleApp.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:appContainerSampleApp="clr-namespace:AppContainerSampleApp"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    Title="MainWindow"
+    Width="800"
+    Height="450"
+    d:DataContext="{d:DesignInstance appContainerSampleApp:MainWindowVm}"
+    mc:Ignorable="d">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Margin" Value="5" />
+            <Setter Property="Padding" Value="3" />
+        </Style>
+    </Window.Resources>
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <TextBox Grid.Column="0" Text="{Binding Executable, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+        <Button
+            Grid.Row="0"
+            Grid.Column="1"
+            Command="{Binding SelectAppCommand}">
+            Select application...
+        </Button>
+        <Button
+            Grid.Row="0"
+            Grid.Column="2"
+            Command="{Binding RunCommand}">
+            Run in AppContainer
+        </Button>
+        <RichTextBox
+            Name="RichTextBox"
+            Grid.Row="1"
+            Grid.Column="0"
+            Grid.ColumnSpan="3"
+            Background="Black"
+            FontFamily="Consolas"
+            FontSize="14"
+            IsReadOnly="True" />
+
+    </Grid>
+
+</Window>
