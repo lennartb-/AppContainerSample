@@ -1,5 +1,4 @@
 ﻿using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using Serilog;
@@ -14,6 +13,7 @@ namespace AppContainerWrapper;
 /// </summary>
 public class AppContainerCreator
 {
+    private readonly string? directory;
     private readonly ILogger logger;
 
     /// <summary>
@@ -23,6 +23,27 @@ public class AppContainerCreator
     public AppContainerCreator(ILogger logger)
     {
         this.logger = logger;
+    }
+
+    /// <summary>
+    ///     Initializes a new instance of the <see cref="AppContainerCreator" /> class.
+    /// </summary>
+    /// <param name="logger">An implementation of <see cref="ILogger" />.</param>
+    /// <param name="directory">A directory that will gain full permissions for the container.</param>
+    public AppContainerCreator(ILogger logger, string directory)
+    {
+        this.logger = logger;
+        this.directory = directory;
+    }
+
+    /// <summary>
+    ///     Initializes a new instance of the <see cref="AppContainerCreator" /> class.
+    /// </summary>
+    /// ///
+    /// <param name="directory">A directory that will gain full permissions for the container.</param>
+    public AppContainerCreator(string directory)
+        : this(Logger.None, directory)
+    {
     }
 
     /// <summary>
@@ -43,13 +64,16 @@ public class AppContainerCreator
         var sid = CreateOrGetAppContainerProfile("TestContainer", "TestContainerName", "TestContainerDescription");
 
         SetProcessAttributes(ref startupinfo, sid);
-        if (!GrantFolderAccess(sid, @"D:\temp2"))
+
+        if (directory != null)
         {
-            logger.Information("Error creating AppContainer, last error was: {Error}.", Kernel32.GetLastError());
-            return;
+            if (!GrantFolderAccess(sid, directory))
+            {
+                logger.Information("Error creating AppContainer, last error was: {Error}.", Kernel32.GetLastError());
+                return;
+            }
         }
 
-        // GrantFolderAccess(sid, @"D:\temp\test.txt");
         CreateSandboxedProcess(ref startupinfo, processName);
     }
 
@@ -121,6 +145,8 @@ public class AppContainerCreator
                 TrusteeType = AdvApi32.TRUSTEE_TYPE.TRUSTEE_IS_WELL_KNOWN_GROUP,
             },
         };
+
+        // ReSharper disable All - R# incorrectly removes arguments from native method calls.
         var info = AdvApi32.GetNamedSecurityInfo(path, type, SECURITY_INFORMATION.DACL_SECURITY_INFORMATION, out var ppsidOwner, out var ppsidGroup, out var ppDacl, out var ppSacl, out _);
 
         if (info.Failed)
@@ -137,8 +163,7 @@ public class AppContainerCreator
             return false;
         }
 
-        // ReSharper disable once RedundantArgumentDefaultValue
-        var setInfo = AdvApi32.SetNamedSecurityInfo(path, type, SECURITY_INFORMATION.DACL_SECURITY_INFORMATION, ppsidOwner);
+        var setInfo = AdvApi32.SetNamedSecurityInfo(path, type, SECURITY_INFORMATION.DACL_SECURITY_INFORMATION, ppsidOwner, ppsidGroup, newAcl.DangerousGetHandle(), ppSacl);
 
         if (setInfo.Failed)
         {
@@ -148,6 +173,8 @@ public class AppContainerCreator
 
         logger.Information("Granting folder access for container {SID} to path {Path} ", appContainerSid.ToDisplayString(), path);
         return true;
+
+        // ReSharper restore All
     }
 
     private void SetProcessAttributes(ref Kernel32.STARTUPINFOEX startupinfo, AdvApi32.SafeAllocatedSID sid)

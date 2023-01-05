@@ -18,32 +18,67 @@
     </Window.Resources>
     <Grid>
         <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="*" />
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
-        <TextBox Grid.Column="0" Text="{Binding Executable, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-        <Button
+        <Label
+            Grid.Row="0"
+            Grid.Column="0"
+            VerticalContentAlignment="Center"
+            Content="Application:" />
+        <TextBox
             Grid.Row="0"
             Grid.Column="1"
+            Margin="0,0,0,5"
+            VerticalContentAlignment="Center"
+            Text="{Binding Executable, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+        <Label
+            Grid.Row="1"
+            Grid.Column="0"
+            VerticalContentAlignment="Center"
+            Content="Directory:" />
+        <TextBox
+            Grid.Row="1"
+            Grid.Column="1"
+            VerticalContentAlignment="Center"
+            Text="{Binding Directory, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+        <Button
+            Grid.Row="0"
+            Grid.Column="2"
             Command="{Binding SelectAppCommand}">
             Select application...
         </Button>
         <Button
-            Grid.Row="0"
+            Grid.Row="1"
             Grid.Column="2"
+            Command="{Binding SelectDirectoryCommand}">
+            Select directory...
+        </Button>
+        <Button
+            Grid.Row="0"
+            Grid.Column="3"
             Command="{Binding RunCommand}">
             Run in AppContainer
         </Button>
+        <Label
+            Grid.Row="2"
+            Grid.Column="0"
+            VerticalContentAlignment="Center"
+            Content="Log:" />
         <RichTextBox
             Name="RichTextBox"
-            Grid.Row="1"
+            Grid.Row="3"
             Grid.Column="0"
-            Grid.ColumnSpan="3"
+            Grid.ColumnSpan="4"
             Background="Black"
             FontFamily="Consolas"
             FontSize="14"
